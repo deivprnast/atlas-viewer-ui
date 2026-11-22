@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
+<meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
+<meta name="referrer" content="no-referrer" />
+<meta property="og:title" content="Rodokmen" />
+<meta property="og:description" content="Zadejte heslo pro otevření." />
+<title>Rodokmen</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #faf4e6;
+    color: #2a1e12;
+    font-family: "Georgia", "Palatino Linotype", serif;
+    font-size: 16px;
+    line-height: 1.55;
+    overflow-x: hidden;
+  }
+  .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .lock-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: radial-gradient(circle at top, #fffaf0 0%, #f3e6cb 100%);
+  }
+  .lock-card {
+    width: 100%;
+    max-width: 400px;
+    background: #fffdf8;
+    border: 2px solid #c9ab6c;
+    border-radius: 18px;
+    padding: 34px 28px 28px;
+    box-shadow: 0 14px 40px rgba(58, 38, 14, 0.12);
+    text-align: center;
+  }
+  .lock-card h1 { margin: 0 0 18px; font-size: 28px; color: #2a1e12; letter-spacing: 0.3px; }
+  .pw-wrap { position: relative; display: flex; align-items: center; margin-bottom: 12px; }
+  .pw-input {
+    width: 100%;
+    padding: 13px 46px 13px 15px;
+    font-size: 16px;
+    border-radius: 11px;
+    border: 1.8px solid #cbb17d;
+    background: #fff;
+    color: #2a1e12;
+    outline: none;
+  }
+  .pw-input:focus { border-color: #6f4b15; box-shadow: 0 0 0 3px rgba(180, 138, 62, 0.2); }
+  .pw-eye {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: none;
+    font-size: 18px;
+    padding: 6px 8px;
+    cursor: pointer;
+    color: #655139;
+  }
+  .unlock-btn {
+    width: 100%;
+    padding: 13px 18px;
+    font-size: 16px;
+    font-weight: 700;
+    border-radius: 11px;
+    border: 1.5px solid #4b3319;
+    background: linear-gradient(135deg, #4b3319 0%, #6b4822 100%);
+    color: #fff8e7;
+    cursor: pointer;
+  }
+  .unlock-btn:disabled { opacity: 0.65; cursor: wait; }
+  .lock-msg { min-height: 20px; margin-top: 12px; font-size: 13.5px; font-weight: 600; color: #9e2a2b; }
+  .lock-msg.info { color: #5b4324; }
+  #appRoot { display: none; }
+  #appRoot.ready { display: block; }
+</style>
+</head>
+<body>
+  <div id="lockScreen" class="lock-screen">
+    <form class="lock-card" id="lockForm">
+      <h1>Rodokmen</h1>
+      <div class="pw-wrap">
+        <input
+          id="pwInput"
+          class="pw-input sans"
+          type="password"
+          placeholder="Zadejte heslo…"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          autocomplete="current-password"
+          autofocus
+          required
+        />
+        <button type="button" class="pw-eye" id="pwEyeBtn" aria-label="Zobrazit nebo skrýt heslo">👁️</button>
+      </div>
+      <button type="submit" class="unlock-btn sans" id="unlockBtn">Odemknout</button>
+      <div class="lock-msg sans" id="lockMsg" role="alert"></div>
+    </form>
+  </div>
+  <div id="appRoot"></div>
+<script>
+(() => {
+  const ITER = 600000;
+  const CORE_URL = './data/core.bin?v=162d8a5b';
+  let corePromise = fetch(CORE_URL)
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    .catch(() => null);
+
+  const pwInput = document.getElementById('pwInput');
+  const pwEyeBtn = document.getElementById('pwEyeBtn');
+  const unlockBtn = document.getElementById('unlockBtn');
+  const lockMsg = document.getElementById('lockMsg');
+
+  pwEyeBtn.addEventListener('click', () => {
+    const isPw = pwInput.type === 'password';
+    pwInput.type = isPw ? 'text' : 'password';
+    pwEyeBtn.textContent = isPw ? '🙈' : '👁️';
+    pwInput.focus();
+  });
+
+  async function derive(pw, salt) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt, iterations: ITER, hash: 'SHA-256' },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+  }
+
+  document.getElementById('lockForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const raw = (pwInput.value || '').trim();
+    if (!raw) return;
+    const urlSecret = (window.location.hash || '').replace(/^#/, '').trim();
+    unlockBtn.disabled = true;
+    lockMsg.className = 'lock-msg info sans';
+    lockMsg.textContent = 'Otevírám…';
+
+    try {
+      let buf = await corePromise;
+      if (!buf) {
+        const r = await fetch(CORE_URL, { cache: 'no-store' });
+        if (!r.ok) throw new Error('Load error');
+        buf = await r.arrayBuffer();
+        corePromise = Promise.resolve(buf);
+      }
+      const bytes = new Uint8Array(buf);
+      const salt = bytes.slice(0, 16);
+      const iv = bytes.slice(16, 28);
+      const ct = bytes.slice(28);
+
+      let plainAb = null;
+      let goodKey = null;
+
+      if (urlSecret) {
+        try {
+          const k = await derive(urlSecret + ':' + raw, salt);
+          plainAb = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, k, ct);
+          goodKey = k;
+        } catch (_) {}
+      }
+
+      if (!plainAb || !goodKey) {
+        lockMsg.className = 'lock-msg sans';
+        lockMsg.textContent = 'Nesprávné heslo. Zkuste to prosím znovu.';
+        unlockBtn.disabled = false;
+        pwInput.select();
+        return;
+      }
+
+      const CORE = JSON.parse(new TextDecoder().decode(plainAb));
+      pwInput.value = '';
+      document.getElementById('lockScreen').remove();
+      const boot = new Function('CORE', 'vaultKey', CORE.APP_CODE);
+      boot(CORE, goodKey);
+    } catch (_) {
+      lockMsg.className = 'lock-msg sans';
+      lockMsg.textContent = 'Chyba při načítání. Zkuste prosím obnovit stránku.';
+      unlockBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
